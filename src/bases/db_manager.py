@@ -59,15 +59,15 @@ class DBManager:
     def __init_postgres(self):
         '''Initializes the PostgreSQL database with the necessary table.'''        
         try:
-            cur = self.pg_db.cursor()
-            cur.execute('''
-                CREATE TABLE IF NOT EXISTS leaderboard (
-                    id SERIAL PRIMARY KEY,
-                    key VARCHAR(255) UNIQUE NOT NULL,
-                    score FLOAT NOT NULL,
-                    tags FLOAT[]
-                );
-            ''')
+            with self.pg_db.cursor() as cur:
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS leaderboard (
+                        id SERIAL PRIMARY KEY,
+                        key VARCHAR(255) UNIQUE NOT NULL,
+                        score FLOAT NOT NULL,
+                        tags FLOAT[]
+                    );
+                ''')
             self.pg_db.commit()
             cur.close()
             logger.info("PostgreSQL database initialized successfully!")
@@ -97,13 +97,13 @@ class DBManager:
         '''Updates the score for a given key in the leaderboard.'''
         try:
             self.redis_db.zadd('leaderboard', {key: score})
-            cur = self.pg_db.cursor()
-            cur.execute(f'''
-                INSERT INTO leaderboard (key, score) 
-                VALUES ('{key}', {score}) 
-                ON CONFLICT (key) 
-                DO UPDATE SET score = {score};
-            ''')
+            with self.pg_db.cursor() as cur:
+                cur.execute(f'''
+                    INSERT INTO leaderboard (key, score) 
+                    VALUES ('{key}', {score}) 
+                    ON CONFLICT (key) 
+                    DO UPDATE SET score = {score};
+                ''')
             self.pg_db.commit()
             cur.close()
             logger.info(f"Updated {key}'s score to {score}.")
@@ -124,11 +124,15 @@ class DBManager:
             logger.error(f"Error retrieving score: {e}")
             return None
 
-    def get_leaderboard(self, n:int = 0):
+    def get_leaderboard(self, n:int = 0) -> List[tuple]:
         '''Returns the top N objects from the leaderboard.
         If n is 0 or not given, returns the entire leaderboard.'''
         try:
-            leaderboard = self.redis_db.zrange('leaderboard', 0, n - 1, withscores=True)
+            res = self.redis_db.zrange('leaderboard', 0, n - 1, withscores=True)
+            leaderboard = []
+            for key, score in res:
+                tags = [float(tag) for tag in self.redis_db.lrange(key, 0, -1)]
+                leaderboard.append((key, score, tags))
             logger.info(f"Top {n} Leaderboard: {leaderboard}")
             return leaderboard
         except Exception as e:
@@ -140,13 +144,13 @@ class DBManager:
         If tags is empty, it clears all tags for that key.'''
         try:
             self.redis_db.delete(key)
-            cur = self.pg_db.cursor()
-            cur.execute(f'''
-                INSERT INTO leaderboard (key, score, tags)
-                VALUES ('{key}', COALESCE((SELECT score FROM leaderboard WHERE key = '{key}'), 0), ARRAY{tags})
-                ON CONFLICT (key)
-                DO UPDATE SET tags = ARRAY{tags};
-            ''')
+            with self.pg_db.cursor() as cur:
+                cur.execute(f'''
+                    INSERT INTO leaderboard (key, score, tags)
+                    VALUES ('{key}', COALESCE((SELECT score FROM leaderboard WHERE key = '{key}'), 0), ARRAY{tags})
+                    ON CONFLICT (key)
+                    DO UPDATE SET tags = ARRAY{tags};
+                ''')
             self.pg_db.commit()
             cur.close()
             if tags:
@@ -157,6 +161,17 @@ class DBManager:
         except Exception as e:
             logger.error(f"Error updating tags: {e}")
 
+    def get_tags(self, key:str):
+        '''Returns the tags for a given key.'''
+        try:
+            tags = self.redis_db.lrange(key, 0, -1)
+            tags.reverse()
+            logger.info(f"{key}'s tags: {tags}")
+            return tags
+        except Exception as e:
+            logger.error(f"Error retrieving tags: {e}")
+            return None
+        
     def delete_object(self, key:str):
         '''Deletes a given key from the leaderboard and its associated tags.'''
         try:
