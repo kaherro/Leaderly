@@ -110,7 +110,7 @@ class DBManager:
         except Exception as e:
             logger.error(f"Error updating score: {e}")
 
-    def get_score(self, key: str):
+    def get_score(self, key: str) -> float:
         '''Returns the score for a given key from the leaderboard.'''
         try:
             score = self.redis_db.zscore('leaderboard', key)
@@ -142,10 +142,12 @@ class DBManager:
             self.redis_db.delete(key)
             cur = self.pg_db.cursor()
             cur.execute(f'''
-                UPDATE leaderboard 
-                SET tags = ARRAY{tags} 
-                WHERE key = '{key}';
+                INSERT INTO leaderboard (key, score, tags)
+                VALUES ('{key}', COALESCE((SELECT score FROM leaderboard WHERE key = '{key}'), 0), ARRAY{tags})
+                ON CONFLICT (key)
+                DO UPDATE SET tags = ARRAY{tags};
             ''')
+            self.pg_db.commit()
             cur.close()
             if tags:
                 self.redis_db.lpush(key, *tags)
