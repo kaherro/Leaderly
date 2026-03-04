@@ -1,18 +1,26 @@
 <script setup>
-import { ref } from 'vue'
-
-const message = ref('Welcome to Leaderly!')
+import Header from './components/Header.vue'
 </script>
 
 <template>
+  <Header />
   <div id="app">
-    <h1>{{ message }}</h1>
-    <p>vue project is ready!</p>
+    <router-view />
   </div>
 </template>
 
-<style scoped>
-h1 {
-  color: #42b983;
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Source Sans Pro',
+    'Helvetica Neue', sans-serif;
+  background: #0f1729;
+}
+
+#app {
+  margin: 0;
+  padding: 0;
 }
 </style>
