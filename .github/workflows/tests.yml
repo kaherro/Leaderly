@@ -33,13 +33,6 @@ jobs:
       with:
         python-version: '3.11'
     
-    - name: Wait for Redis and PostgreSQL to start
-      run: |
-        # Ждем Redis
-        timeout 30s bash -c 'until redis-cli -h localhost ping; do sleep 1; done'
-        # Ждем PostgreSQL
-        timeout 30s bash -c 'until pg_isready -h localhost -p 5432; do sleep 1; done'
-    
     - run: |
         pip install --upgrade pip
         pip install -r requirements.txt
