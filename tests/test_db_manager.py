@@ -58,7 +58,7 @@ class TestDBManager(unittest.TestCase):
     def test_get_score_nonexistent_user(self):
         score = self.db.get_score("nonexistent")
         self.assertIsNone(score)
-
+        
     def test_get_leaderboard_all(self):
         scores = [("user1", 300), ("user2", 200), ("user3", 100)]
         for user, score in scores:
@@ -69,3 +69,34 @@ class TestDBManager(unittest.TestCase):
     def test_get_leaderboard_empty(self):
         leaderboard = self.db.get_leaderboard(10)
         self.assertEqual(leaderboard, [])
+    
+    def test_update_tags_new_user(self):
+        tags = [1.0, 2.0, 3.0]
+        self.db.update_tags("test_user", tags)
+        
+        res = self.db.get_tags("test_user")
+        self.assertEqual(res, [str(t) for t in tags]) 
+    
+    def test_update_tags_existing_user(self):
+        self.db.update_score("test_user", 100)
+        
+        tags = [1.0, 2.0, 3.0]
+        self.db.update_tags("test_user", tags)
+        
+        res = self.db.get_tags("test_user")
+        self.assertEqual(res, [str(t) for t in tags])
+        
+        score = self.db.get_score("test_user")
+        self.assertEqual(score, 100)
+    
+    def test_update_tags_empty_list(self):
+        self.db.update_tags("test_user", [1.0, 2.0])
+        self.db.update_tags("test_user", [])
+        
+        res = self.db.get_tags("test_user")
+        self.assertEqual(res, [])
+    
+    def test_get_tags_nonexistent_user(self):
+        tags = self.db.get_tags("nonexistent")
+        self.assertEqual(tags, [])
+    
