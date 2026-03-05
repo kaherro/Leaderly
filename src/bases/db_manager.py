@@ -40,6 +40,7 @@ class DBManager:
             logger.info("Connected to Redis successfully!")
         except redis.exceptions.ConnectionError as e:
             logger.error(f"Failed to connect to Redis: {e}")
+            raise AttributeError(f"Failed to connect to Redis: {e}")
             self.redis_db = None
 
         try:
