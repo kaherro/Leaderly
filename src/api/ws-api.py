@@ -31,8 +31,8 @@ async def ws_handler(websocket: WebSocket, action: str, path: str):
         
         leaderboard = db_manager.get_leaderboard()
         await websocket.send_json({
-            "type": "success",
-            "action": "leaderboard",
+            "type": "Operation (successful)",
+            "action": "get_leaderboard",
             "data": [{"key": k, "score": s, "tags": t} for k, s, t in leaderboard]
         })
         
@@ -44,6 +44,24 @@ async def ws_handler(websocket: WebSocket, action: str, path: str):
             logger.info(f"Client disconnected. Total connections: {len(active_connections)}")
         return
     
+async def broadcast_leaderboard():
+    if not active_connections:
+        return
+    
+    try:
+        leaderboard = db_manager.get_leaderboard()
+        message = {
+            "type": "leaderboard_update",
+            "data": [{"key": k, "score": s, "tags": t} for k, s, t in leaderboard]
+        }
+        for connection in active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception as e:
+                logger.error(f"Error sending to connection: {e}")
+        logger.info(f"Broadcasted leaderboard to {len(active_connections)} clients")
+    except Exception as e:
+        logger.error(f"Error broadcasting leaderboard: {e}")
     
 
 if __name__ == "__main__":
