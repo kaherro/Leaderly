@@ -135,7 +135,7 @@ class DBManager:
                 tags = [float(tag) for tag in self.redis_db.lrange(key, 0, -1)]
                 leaderboard.append((key, score, tags))
             logger.info(f"Top {n} Leaderboard: {leaderboard}")
-            return leaderboard
+            return leaderboard[::-1]
         except Exception as e:
             logger.error(f"Error retrieving leaderboard: {e}")
             return []
