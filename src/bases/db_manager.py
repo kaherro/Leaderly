@@ -134,7 +134,7 @@ class DBManager:
             for key, score in res:
                 tags = [float(tag) for tag in self.redis_db.lrange(key, 0, -1)]
                 leaderboard.append((key, score, tags))
-            logger.info(f"Top {n} Leaderboard: {leaderboard}")
+            logger.info(f"Top {n} Leaderboard: {leaderboard[::-1]}")
             return leaderboard[::-1]
         except Exception as e:
             logger.error(f"Error retrieving leaderboard: {e}")
@@ -166,7 +166,6 @@ class DBManager:
         '''Returns the tags for a given key.'''
         try:
             tags = self.redis_db.lrange(key, 0, -1)
-            tags.reverse()
             logger.info(f"{key}'s tags: {tags}")
             return tags
         except Exception as e:
