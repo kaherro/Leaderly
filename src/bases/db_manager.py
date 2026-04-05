@@ -155,7 +155,7 @@ class DBManager:
             self.pg_db.commit()
             cur.close()
             if tags:
-                self.redis_db.lpush(key, *tags)
+                self.redis_db.lpush(key, *tags[::-1])
                 logger.info(f"Updated {key}'s tags: {tags}")
             else:
                 logger.info(f"Cleared all tags for {key}.")
