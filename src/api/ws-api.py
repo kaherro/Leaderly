@@ -24,15 +24,15 @@ active_connections: Set[WebSocket] = set()
 async def ws_handler(websocket: WebSocket, action: str, path: str):
     """WebSocket handling function that processes different 
     API-actions based on the URL path."""
-    if action == "get_leaderboard":
+    if action == "connect":
         await websocket.accept()
         active_connections.add(websocket)
         logger.info(f"Client connected. Total connections: {len(active_connections)}")
         
         leaderboard = db_manager.get_leaderboard()
         await websocket.send_json({
-            "type": "Operation (successful)",
-            "action": "get_leaderboard",
+            "type": "Connection (successful)",
+            "action": "connect",
             "data": [{"key": k, "score": s, "tags": t} for k, s, t in leaderboard]
         })
         
