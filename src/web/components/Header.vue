@@ -1,5 +1,28 @@
 <script setup>
 import logoImage from '../assets/logo/logo.png'
+
+const props = defineProps({
+  useRouterLinks: {
+    type: Boolean,
+    default: false
+  },
+  homeLink: {
+    type: String,
+    default: '/'
+  },
+  leaderboardLink: {
+    type: String,
+    default: '/leaderboard'
+  },
+  docsLink: {
+    type: String,
+    default: '#docs'
+  },
+  githubLink: {
+    type: String,
+    default: 'https://github.com/kaherro/Leaderly/tree/main'
+  }
+})
 </script>
 
 <template>
@@ -11,10 +34,24 @@ import logoImage from '../assets/logo/logo.png'
       </div>
       
       <nav class="nav">
-        <router-link to="/" class="nav-link">Главная</router-link>
-        <router-link to="/leaderboard" class="nav-link">Лидерборд</router-link>
-        <a href="#docs" class="nav-link">Документация</a>
-        <a href="https://github.com/kaherro/Leaderly/tree/main" target="_blank" class="nav-link">GitHub</a>
+        <component
+          :is="props.useRouterLinks ? 'router-link' : 'a'"
+          :to="props.useRouterLinks ? props.homeLink : undefined"
+          :href="props.useRouterLinks ? undefined : props.homeLink"
+          class="nav-link"
+        >
+          Главная
+        </component>
+        <component
+          :is="props.useRouterLinks ? 'router-link' : 'a'"
+          :to="props.useRouterLinks ? props.leaderboardLink : undefined"
+          :href="props.useRouterLinks ? undefined : props.leaderboardLink"
+          class="nav-link"
+        >
+          Лидерборд
+        </component>
+        <a :href="props.docsLink" class="nav-link">Документация</a>
+        <a :href="props.githubLink" target="_blank" class="nav-link">GitHub</a>
       </nav>
     </div>
   </header>

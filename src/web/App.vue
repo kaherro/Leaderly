@@ -3,7 +3,7 @@ import Header from './components/Header.vue'
 </script>
 
 <template>
-  <Header />
+  <Header :use-router-links="true" />
   <div id="app">
     <router-view />
   </div>

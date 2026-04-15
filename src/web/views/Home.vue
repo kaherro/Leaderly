@@ -1,4 +1,18 @@
 <script setup>
+const props = defineProps({
+  useRouterLinks: {
+    type: Boolean,
+    default: false
+  },
+  leaderboardLink: {
+    type: String,
+    default: '/leaderboard'
+  },
+  docsLink: {
+    type: String,
+    default: '#docs'
+  }
+})
 </script>
 
 <template>
@@ -11,8 +25,15 @@
         </p>
         
         <div class="buttons">
-          <router-link to="/leaderboard" class="btn btn-primary">🏆 Перейти в лидерборд</router-link>
-          <a href="#docs" class="btn btn-secondary">📚 Документация</a>
+          <component
+            :is="props.useRouterLinks ? 'router-link' : 'a'"
+            :to="props.useRouterLinks ? props.leaderboardLink : undefined"
+            :href="props.useRouterLinks ? undefined : props.leaderboardLink"
+            class="btn btn-primary"
+          >
+            🏆 Перейти в лидерборд
+          </component>
+          <a :href="props.docsLink" class="btn btn-secondary">📚 Документация</a>
         </div>
       </div>
 
