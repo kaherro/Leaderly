@@ -1,31 +1,48 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const variables = ref([
-  { name: 'Победы', key: 'wins' },
-  { name: 'Поражения', key: 'losses' },
+  { name: 'Параметр 1', key: 'param_1' },
+  { name: 'Параметр 2', key: 'param_2' },
+  { name: 'Параметр 3', key: 'param_3' }
 ])
 
-const scoreFormula = ref('wins * 100 - losses * 50')
-
+const scoreFormula = ref('score')
 const showSettings = ref(false)
-
 const newVariable = ref({ name: '', key: '' })
 
-const leaderboardData = ref([
-  { rank: 1, userId: 'user_1', username: 'usr1', wins: 50, losses: 5},
-  { rank: 2, userId: 'user_2', username: 'usr2', wins: 45, losses: 10},
-  { rank: 3, userId: 'user_3', username: 'usr3', wins: 40, losses: 15},
-  { rank: 4, userId: 'user_4', username: 'usr4', wins: 35, losses: 20},
-  { rank: 5, userId: 'user_5', username: 'usr5', wins: 30, losses: 25},
-  { rank: 6, userId: 'user_6', username: 'usr6', wins: 25, losses: 30},
-  { rank: 7, userId: 'user_7', username: 'usr7', wins: 20, losses: 35},
-  { rank: 8, userId: 'user_8', username: 'usr8', wins: 15, losses: 40},
-  { rank: 9, userId: 'user_9', username: 'usr9', wins: 10, losses: 45},
-  { rank: 10, userId: 'user_10', username: 'usr10', wins: 5, losses: 50},
-])
+const leaderboardData = ref([])
+const connectionState = ref('connecting')
+const statusMessage = ref('Подключение к серверу...')
+const socketError = ref('')
 
-const availableVariableKeys = computed(() => variables.value.map((variable) => variable.key).filter(Boolean))
+const editDraft = ref({
+  key: '',
+  score: '0',
+  tags: ''
+})
+
+let subscriptionSocket = null
+let reconnectTimer = null
+let reconnectEnabled = true
+
+const wsBaseUrl = (() => {
+  const configuredUrl = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000'
+
+  if (configuredUrl.startsWith('ws://') || configuredUrl.startsWith('wss://')) {
+    return configuredUrl.replace(/\/$/, '')
+  }
+
+  if (configuredUrl.startsWith('https://')) {
+    return configuredUrl.replace(/^https:\/\//, 'wss://').replace(/\/$/, '')
+  }
+
+  return configuredUrl.replace(/^http:\/\//, 'ws://').replace(/\/$/, '')
+})()
+
+const availableVariableKeys = computed(() => {
+  return ['score', ...variables.value.map((item) => item.key).filter(Boolean)]
+})
 
 const normalizeVariableKey = (index) => {
   const variable = variables.value[index]
@@ -42,10 +59,7 @@ const normalizeVariableKey = (index) => {
     return
   }
 
-  const duplicateIndex = variables.value.findIndex(
-    (item, itemIndex) => item.key === normalizedKey && itemIndex !== index
-  )
-
+  const duplicateIndex = variables.value.findIndex((item, itemIndex) => item.key === normalizedKey && itemIndex !== index)
   variable.key = duplicateIndex !== -1 ? `${normalizedKey}_${index + 1}` : normalizedKey
 }
 
@@ -70,7 +84,7 @@ const addVariable = () => {
     .replace(/\s+/g, '_')
     .replace(/[^a-z0-9_]/g, '')
 
-  if (name && key && !variables.value.some((variable) => variable.key === key)) {
+  if (name && key && !variables.value.some((item) => item.key === key)) {
     variables.value.push({ name, key })
     ensureUserVariableValue(key)
     newVariable.value = { name: '', key: '' }
@@ -78,7 +92,17 @@ const addVariable = () => {
 }
 
 const removeVariable = (index) => {
+  const variable = variables.value[index]
   variables.value.splice(index, 1)
+
+  if (!variable?.key) {
+    return
+  }
+
+  leaderboardData.value = leaderboardData.value.map((user) => {
+    const { [variable.key]: _, ...rest } = user
+    return rest
+  })
 }
 
 const compiledFormula = computed(() => {
@@ -97,7 +121,7 @@ const compiledFormula = computed(() => {
 
 const formulaError = computed(() => {
   if (!scoreFormula.value.trim()) {
-    return 'Введите формулу для подсчёта очков'
+    return 'Введите формулу для подсчета очков'
   }
 
   if (!compiledFormula.value) {
@@ -109,7 +133,7 @@ const formulaError = computed(() => {
 
 const calculateBaseScore = (user) => {
   if (!compiledFormula.value) {
-    return 0
+    return Number(user.score ?? 0)
   }
 
   try {
@@ -122,14 +146,10 @@ const calculateBaseScore = (user) => {
 }
 
 const leaderboardRows = computed(() => {
-  const rows = leaderboardData.value.map((user) => {
-    const baseScore = calculateBaseScore(user)
-
-    return {
-      ...user,
-      computedScore: baseScore
-    }
-  })
+  const rows = leaderboardData.value.map((user) => ({
+    ...user,
+    computedScore: calculateBaseScore(user)
+  }))
 
   return rows
     .sort((firstUser, secondUser) => secondUser.computedScore - firstUser.computedScore)
@@ -139,37 +159,346 @@ const leaderboardRows = computed(() => {
     }))
 })
 
+const connectionBadgeClass = computed(() => {
+  if (connectionState.value === 'connected') return 'badge-connected'
+  if (connectionState.value === 'error') return 'badge-error'
+  return 'badge-connecting'
+})
 
 const gridColumns = computed(() => {
   const varColumns = variables.value.map(() => '120px').join(' ')
-  return `100px 1fr 150px ${varColumns}`
+  return `100px 1fr 150px ${varColumns} 90px`
 })
 
+const parseTagsInput = (rawTags) => {
+  if (!rawTags.trim()) {
+    return []
+  }
+
+  return rawTags
+    .split(',')
+    .map((tag) => Number(tag.trim()))
+    .filter((tag) => Number.isFinite(tag))
+}
+
+const normalizeKey = (value) => value.trim()
+
+const applyLeaderboardData = (data) => {
+  if (!Array.isArray(data)) {
+    return
+  }
+
+  const maxTagsCount = data.reduce((maxCount, entry) => {
+    const tagsCount = Array.isArray(entry.tags) ? entry.tags.length : 0
+    return Math.max(maxCount, tagsCount)
+  }, 0)
+
+  if (maxTagsCount > variables.value.length) {
+    for (let index = variables.value.length + 1; index <= maxTagsCount; index += 1) {
+      variables.value.push({
+        name: `Параметр ${index}`,
+        key: `param_${index}`
+      })
+    }
+  }
+
+  leaderboardData.value = data.map((entry) => {
+    const key = String(entry.key ?? '')
+    const score = Number(entry.score ?? 0)
+    const tags = Array.isArray(entry.tags)
+      ? entry.tags.map((tag) => Number(tag)).filter((tag) => Number.isFinite(tag))
+      : []
+
+    const dynamicValues = {}
+    variables.value.forEach((variable, index) => {
+      dynamicValues[variable.key] = Number(tags[index] ?? 0)
+    })
+
+    return {
+      key,
+      userId: key,
+      username: key,
+      score,
+      ...dynamicValues
+    }
+  })
+}
+
+const buildSocketUrl = (action, path = '') => {
+  const safePath = path ? `/${path}` : ''
+  return `${wsBaseUrl}/ws/${action}${safePath}`
+}
+
+const sendSocketAction = (action, path = '') => {
+  return new Promise((resolve, reject) => {
+    const actionSocket = new WebSocket(buildSocketUrl(action, path))
+    let settled = false
+
+    const finish = (handler, value) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+
+      try {
+        actionSocket.close()
+      } catch {
+        // Ignore close errors during request teardown.
+      }
+
+      handler(value)
+    }
+
+    actionSocket.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+
+        if (payload?.type === 'error') {
+          finish(reject, new Error(payload.message || 'Не удалось выполнить операцию'))
+          return
+        }
+
+        finish(resolve, payload)
+      } catch {
+        finish(reject, new Error('Сервер вернул некорректный ответ'))
+      }
+    }
+
+    actionSocket.onerror = () => {
+      finish(reject, new Error('Ошибка websocket-запроса'))
+    }
+
+    actionSocket.onclose = () => {
+      if (!settled) {
+        finish(reject, new Error('Соединение закрылось до ответа сервера'))
+      }
+    }
+  })
+}
+
+const selectEntry = (entry) => {
+  const tags = variables.value.map((variable) => Number(entry[variable.key] ?? 0))
+
+  editDraft.value = {
+    key: entry.key,
+    score: String(entry.score ?? 0),
+    tags: tags.join(', ')
+  }
+
+  showSettings.value = true
+  socketError.value = ''
+}
+
+const resetDraft = () => {
+  editDraft.value = {
+    key: '',
+    score: '0',
+    tags: ''
+  }
+}
+
+const refreshLeaderboard = async () => {
+  try {
+    socketError.value = ''
+    const payload = await sendSocketAction('get_leaderboard', '0')
+
+    if (Array.isArray(payload?.data)) {
+      applyLeaderboardData(payload.data)
+    }
+  } catch (error) {
+    socketError.value = error instanceof Error ? error.message : 'Не удалось обновить таблицу'
+  }
+}
+
+const saveEntry = async () => {
+  const key = normalizeKey(editDraft.value.key)
+
+  if (!key) {
+    socketError.value = 'Выберите пользователя для редактирования'
+    return
+  }
+
+  const score = Number(editDraft.value.score)
+
+  if (!Number.isFinite(score)) {
+    socketError.value = 'Очки должны быть числом'
+    return
+  }
+
+  try {
+    socketError.value = ''
+    statusMessage.value = 'Сохраняем изменения...'
+
+    await sendSocketAction('update_score', `${encodeURIComponent(key)}/${encodeURIComponent(String(score))}`)
+
+    const tags = parseTagsInput(editDraft.value.tags)
+    await sendSocketAction('update_tags', `${encodeURIComponent(key)}/${encodeURIComponent(tags.join(','))}`)
+
+    statusMessage.value = 'Изменения отправлены'
+  } catch (error) {
+    socketError.value = error instanceof Error ? error.message : 'Не удалось сохранить запись'
+    statusMessage.value = 'Ошибка при сохранении'
+  }
+}
+
+const deleteEntry = async (keyOverride = '') => {
+  const key = normalizeKey(keyOverride || editDraft.value.key)
+
+  if (!key) {
+    socketError.value = 'Выберите пользователя для удаления'
+    return
+  }
+
+  try {
+    socketError.value = ''
+    statusMessage.value = 'Удаляем запись...'
+    await sendSocketAction('delete_object', encodeURIComponent(key))
+    resetDraft()
+    statusMessage.value = 'Запись удалена'
+  } catch (error) {
+    socketError.value = error instanceof Error ? error.message : 'Не удалось удалить запись'
+    statusMessage.value = 'Ошибка при удалении'
+  }
+}
+
+const handleSubscriptionMessage = (event) => {
+  try {
+    const payload = JSON.parse(event.data)
+
+    if (Array.isArray(payload?.data)) {
+      applyLeaderboardData(payload.data)
+    }
+
+    if (payload?.type === 'Connection (successful)') {
+      connectionState.value = 'connected'
+      statusMessage.value = 'Подключение установлено'
+      socketError.value = ''
+      return
+    }
+
+    if (payload?.type === 'leaderboard_update') {
+      statusMessage.value = 'Лидерборд обновлён'
+      socketError.value = ''
+      return
+    }
+
+    if (payload?.type === 'error') {
+      connectionState.value = 'error'
+      socketError.value = payload.message || 'Ошибка websocket'
+    }
+  } catch {
+    socketError.value = 'Не удалось разобрать сообщение от сервера'
+  }
+}
+
+const scheduleReconnect = () => {
+  if (!reconnectEnabled) {
+    return
+  }
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+  }
+
+  reconnectTimer = setTimeout(() => {
+    connectSubscription()
+  }, 2000)
+}
+
+const connectSubscription = () => {
+  if (subscriptionSocket) {
+    try {
+      subscriptionSocket.close()
+    } catch {
+      // Ignore close errors when reconnecting.
+    }
+  }
+
+  connectionState.value = 'connecting'
+  statusMessage.value = 'Подключение к серверу...'
+
+  subscriptionSocket = new WebSocket(buildSocketUrl('connect', 'leaderboard'))
+
+  subscriptionSocket.onopen = () => {
+    connectionState.value = 'connected'
+    statusMessage.value = 'Подписка на обновления активна'
+    socketError.value = ''
+  }
+
+  subscriptionSocket.onmessage = handleSubscriptionMessage
+
+  subscriptionSocket.onerror = () => {
+    connectionState.value = 'error'
+    socketError.value = 'Ошибка подключения к websocket'
+    statusMessage.value = 'Соединение не удалось'
+  }
+
+  subscriptionSocket.onclose = () => {
+    if (!reconnectEnabled) {
+      return
+    }
+
+    connectionState.value = 'connecting'
+    statusMessage.value = 'Соединение потеряно, переподключение...'
+    scheduleReconnect()
+  }
+}
+
+onMounted(() => {
+  reconnectEnabled = true
+  connectSubscription()
+})
+
+onBeforeUnmount(() => {
+  reconnectEnabled = false
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+  }
+
+  if (subscriptionSocket) {
+    try {
+      subscriptionSocket.close()
+    } catch {
+      // Ignore shutdown errors.
+    }
+  }
+})
 </script>
 
 <template>
   <div class="container">
     <section class="leaderboard-section">
       <div class="leaderboard-header">
-        <h1 class="leaderboard-title">🏆 Таблица лидеров</h1>
+        <h1 class="leaderboard-title">Таблица лидеров</h1>
         <p class="leaderboard-description">
           Рейтинг обновляется в реальном времени
         </p>
-        <button @click="showSettings = !showSettings" class="settings-btn">
-          ⚙️ {{ showSettings ? 'Скрыть настройки' : 'Настройки' }}
-        </button>
+        <div class="connection-row">
+          <span class="connection-status" :class="connectionBadgeClass">
+            {{ connectionState }}
+          </span>
+          <span class="connection-message">{{ statusMessage }}</span>
+        </div>
+        <div class="header-actions">
+          <button @click="showSettings = !showSettings" class="settings-btn">
+            ⚙️ {{ showSettings ? 'Скрыть настройки' : 'Настройки' }}
+          </button>
+          <button @click="refreshLeaderboard" class="settings-btn">⟳ Обновить</button>
+        </div>
       </div>
 
       <div v-if="showSettings" class="settings-panel">
         <div class="settings-section">
           <h3 class="settings-title">Формула подсчета очков</h3>
-          <input 
-            v-model="scoreFormula" 
-            type="text" 
+          <input
+            v-model="scoreFormula"
+            type="text"
             class="formula-input"
-            placeholder="Например: wins * 100 - losses * 50"
+            placeholder="Например: score"
           />
-          <p class="settings-hint">Используйте ключи переменных из списка ниже: {{ availableVariableKeys.join(', ') || 'нет переменных' }}</p>
+          <p class="settings-hint">Список переменных: {{ availableVariableKeys.join(', ') }}</p>
           <p v-if="formulaError" class="settings-error">{{ formulaError }}</p>
         </div>
 
@@ -193,21 +522,53 @@ const gridColumns = computed(() => {
               <button @click="removeVariable(index)" class="remove-btn">✕</button>
             </div>
           </div>
-          
+
           <div class="add-variable">
-            <input 
-              v-model="newVariable.name" 
-              type="text" 
+            <input
+              v-model="newVariable.name"
+              type="text"
               class="variable-input"
-              placeholder="Название (например: Победы)"
+              placeholder="Название"
             />
-            <input 
-              v-model="newVariable.key" 
-              type="text" 
+            <input
+              v-model="newVariable.key"
+              type="text"
               class="variable-input"
-              placeholder="Ключ (например: wins)"
+              placeholder="Ключ"
             />
             <button @click="addVariable" class="add-btn">+ Добавить</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3 class="settings-title">Прямое редактирование</h3>
+          <div class="editor-grid">
+            <input
+              v-model="editDraft.key"
+              type="text"
+              class="formula-input"
+              placeholder="key пользователя"
+              readonly
+            />
+            <input
+              v-model="editDraft.score"
+              type="number"
+              class="formula-input"
+              placeholder="Очки"
+            />
+            <input
+              v-model="editDraft.tags"
+              type="text"
+              class="formula-input"
+              placeholder="Теги через запятую"
+            />
+          </div>
+          <p class="settings-hint">Нажмите на карандаш в строке таблицы, чтобы редактировать запись.</p>
+          <p v-if="socketError" class="settings-error">{{ socketError }}</p>
+          <div class="editor-actions">
+            <button @click="saveEntry" class="add-btn">Сохранить</button>
+            <button @click="deleteEntry" class="remove-btn wide-remove">Удалить</button>
+            <button @click="resetDraft" class="neutral-btn">Сбросить</button>
           </div>
         </div>
       </div>
@@ -218,14 +579,19 @@ const gridColumns = computed(() => {
             <div class="header-cell rank-cell">Место</div>
             <div class="header-cell user-cell">Пользователь</div>
             <div class="header-cell score-cell">Очки</div>
-            <div v-for="(variable, variableIndex) in variables" :key="`${variable.key}-${variableIndex}`" class="header-cell var-cell">
+            <div
+              v-for="(variable, variableIndex) in variables"
+              :key="`${variable.key}-${variableIndex}`"
+              class="header-cell var-cell"
+            >
               {{ variable.name }}
             </div>
+            <div class="header-cell actions-cell">Действия</div>
           </div>
 
           <div class="table-body">
-            <div 
-              v-for="user in leaderboardRows" 
+            <div
+              v-for="user in leaderboardRows"
               :key="user.userId"
               class="table-row"
               :class="{ 'top-three': user.rank <= 3 }"
@@ -247,9 +613,20 @@ const gridColumns = computed(() => {
               <div class="body-cell score-cell">
                 <span class="score">{{ user.computedScore.toLocaleString() }}</span>
               </div>
-              <div v-for="(variable, variableIndex) in variables" :key="`${variable.key}-${variableIndex}`" class="body-cell var-cell">
+              <div
+                v-for="(variable, variableIndex) in variables"
+                :key="`${variable.key}-${variableIndex}`"
+                class="body-cell var-cell"
+              >
                 <span class="var-value">{{ user[variable.key] }}</span>
               </div>
+              <div class="body-cell actions-cell">
+                <button @click="selectEntry(user)" class="inline-action-btn">✏️</button>
+              </div>
+            </div>
+
+            <div v-if="!leaderboardRows.length" class="empty-state">
+              Пока нет данных. Добавьте записи через backend и они появятся здесь.
             </div>
           </div>
         </div>
@@ -294,14 +671,14 @@ const gridColumns = computed(() => {
 
 .leaderboard-header {
   text-align: center;
-  margin-bottom: 50px;
+  margin-bottom: 30px;
   position: relative;
   z-index: 1;
 }
 
 .leaderboard-title {
   font-size: 3rem;
-  margin-bottom: 15px;
+  margin-bottom: 10px;
   font-weight: 700;
   background: linear-gradient(135deg, #667eea, #764ba2);
   -webkit-background-clip: text;
@@ -310,12 +687,62 @@ const gridColumns = computed(() => {
 }
 
 .leaderboard-description {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.connection-row {
+  margin-top: 10px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.connection-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.badge-connected {
+  background: rgba(118, 212, 118, 0.18);
+  color: #9ef0b0;
+  border: 1px solid rgba(118, 212, 118, 0.35);
+}
+
+.badge-connecting {
+  background: rgba(102, 126, 234, 0.18);
+  color: #c8d2ff;
+  border: 1px solid rgba(102, 126, 234, 0.35);
+}
+
+.badge-error {
+  background: rgba(255, 107, 107, 0.18);
+  color: #ffb0b0;
+  border: 1px solid rgba(255, 107, 107, 0.35);
+}
+
+.connection-message {
   color: rgba(255, 255, 255, 0.7);
+  font-size: 0.9rem;
+}
+
+.header-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 
 .settings-btn {
-  margin-top: 16px;
   border: 1px solid rgba(102, 126, 234, 0.5);
   background: rgba(102, 126, 234, 0.15);
   color: rgba(255, 255, 255, 0.95);
@@ -403,8 +830,22 @@ const gridColumns = computed(() => {
   gap: 10px;
 }
 
+.editor-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) minmax(240px, 1.4fr);
+  gap: 10px;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
 .add-btn,
-.remove-btn {
+.remove-btn,
+.neutral-btn {
   border: none;
   border-radius: 8px;
   font-weight: 600;
@@ -420,6 +861,16 @@ const gridColumns = computed(() => {
 .remove-btn {
   background: rgba(255, 107, 107, 0.8);
   width: 38px;
+}
+
+.wide-remove {
+  width: auto;
+  padding: 0 14px;
+}
+
+.neutral-btn {
+  background: rgba(255, 255, 255, 0.12);
+  padding: 0 14px;
 }
 
 .leaderboard-container {
@@ -441,7 +892,6 @@ const gridColumns = computed(() => {
 
 .table-header {
   display: grid;
-  grid-template-columns: 100px 1fr 150px 120px;
   gap: 20px;
   padding: 20px calc(30px + var(--table-scrollbar-width)) 20px 30px;
   background: rgba(102, 126, 234, 0.1);
@@ -464,7 +914,6 @@ const gridColumns = computed(() => {
 
 .table-row {
   display: grid;
-  grid-template-columns: 100px 1fr 150px 120px;
   gap: 20px;
   padding: 20px 30px;
   border-bottom: 1px solid rgba(102, 126, 234, 0.1);
@@ -520,155 +969,98 @@ const gridColumns = computed(() => {
 .user-info {
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 12px;
 }
 
 .user-avatar {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea, #764ba2);
   display: flex;
   align-items: center;
   justify-content: center;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
   font-weight: 700;
-  font-size: 1.1rem;
 }
 
 .username {
-  font-weight: 500;
   font-size: 1rem;
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 600;
 }
 
 .score {
+  font-size: 1.05rem;
   font-weight: 700;
-  font-size: 1.2rem;
-  color: #76d4d4;
+  color: #9ce7ff;
 }
 
-.change-badge {
-  padding: 5px 12px;
-  border-radius: 12px;
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-.change-badge.positive {
-  background: rgba(118, 212, 127, 0.2);
-  color: #76d47f;
-}
-
-.change-badge.negative {
-  background: rgba(255, 107, 107, 0.2);
-  color: #ff6b6b;
-}
-
-.change-badge.neutral {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.info-card {
-  background: rgba(102, 126, 234, 0.1);
-  border: 1px solid rgba(102, 126, 234, 0.3);
-  border-radius: 12px;
-  padding: 20px 25px;
-  display: flex;
-  gap: 20px;
-  align-items: flex-start;
-}
-
-.info-icon {
-  font-size: 2rem;
-  flex-shrink: 0;
-}
-
-.info-content {
-  flex: 1;
-}
-
-.info-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.info-text {
+.var-value {
   font-size: 0.95rem;
-  color: rgba(255, 255, 255, 0.7);
-  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.actions-cell {
+  justify-content: flex-end;
+}
+
+.inline-action-btn {
+  border: none;
+  border-radius: 10px;
+  background: rgba(102, 126, 234, 0.22);
+  border: 1px solid rgba(102, 126, 234, 0.45);
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+}
+
+.empty-state {
+  padding: 24px 30px;
+  color: rgba(255, 255, 255, 0.65);
 }
 
 .table-body::-webkit-scrollbar {
-  width: 8px;
+  width: var(--table-scrollbar-width);
 }
 
 .table-body::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .table-body::-webkit-scrollbar-thumb {
-  background: rgba(102, 126, 234, 0.3);
-  border-radius: 4px;
+  background: rgba(102, 126, 234, 0.45);
+  border-radius: 999px;
 }
 
 .table-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(102, 126, 234, 0.5);
+  background: rgba(102, 126, 234, 0.65);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1100px) {
   .leaderboard-section {
-    padding: 80px 20px 40px;
+    padding-left: 24px;
+    padding-right: 24px;
   }
 
-  .leaderboard-title {
-    font-size: 2rem;
-  }
-
+  .editor-grid,
   .table-header,
   .table-row {
-    grid-template-columns: 60px 1fr 100px 80px;
-    gap: 10px;
-    padding: 15px 15px;
+    grid-template-columns: 1fr;
   }
 
   .table-header {
-    padding-right: calc(15px + var(--table-scrollbar-width));
+    display: none;
   }
 
-  .header-cell {
-    font-size: 0.75rem;
-  }
-
-  .rank-badge {
-    width: 35px;
-    height: 35px;
-    font-size: 0.9rem;
-  }
-
-  .user-avatar {
-    width: 35px;
-    height: 35px;
-    font-size: 1rem;
-  }
-
-  .username {
-    font-size: 0.9rem;
-  }
-
-  .score {
-    font-size: 1rem;
+  .body-cell {
+    justify-content: flex-start;
   }
 
   .variable-item,
   .add-variable {
     grid-template-columns: 1fr;
-  }
-
-  .change-badge {
-    padding: 4px 8px;
-    font-size: 0.8rem;
   }
 }
 </style>

@@ -1,0 +1,6 @@
+.venv
+.venv311
+
+src/bases/__pycache__/
+src/web/dis/
+src/web/node_modules/
