@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 const props = defineProps({
   useRouterLinks: {
     type: Boolean,
@@ -10,7 +10,7 @@ const props = defineProps({
   },
   docsLink: {
     type: String,
-    default: '#docs'
+    default: 'https://github.com/kaherro/Leaderly/blob/dev/README.md'
   }
 })
 </script>
@@ -19,11 +19,11 @@ const props = defineProps({
   <div class="container">
     <section id="home" class="hero">
       <div class="hero-left">
-        <h1 class="hero-title">Лидербоард в реальном времени</h1>
+        <h1 class="hero-title">Лидерборд в реальном времени</h1>
         <p class="hero-description">
           Leaderly - бесплатная open-source библиотека на Python, которая позволяет разработчикам создать систему рейтинга в реальном времени.
         </p>
-        
+
         <div class="buttons">
           <component
             :is="props.useRouterLinks ? 'router-link' : 'a'"
@@ -40,9 +40,36 @@ const props = defineProps({
       <div class="hero-right">
         <div class="code-block">
           <div class="code-header">
-            <span class="code-title">leaderly.py</span>
+            <span class="code-title">leaderboard.py</span>
           </div>
-          <pre><code></code></pre>
+          <pre><code v-pre><span class="keyword">from</span> <span class="module">src.leaderboard</span> <span class="keyword">import</span> <span class="class-name">LeaderboardClient</span>
+
+<span class="comment"># Создание клиента с параметрами по умолчанию</span>
+<span class="var">lb</span> = <span class="class-name">LeaderboardClient</span>()
+
+<span class="comment"># Добавление игроков</span>
+<span class="var">lb</span>.<span class="method">update_score</span>(<span class="string">"alice"</span>, <span class="number">1500</span>)
+<span class="var">lb</span>.<span class="method">update_score</span>(<span class="string">"bob"</span>, <span class="number">2300</span>)
+<span class="var">lb</span>.<span class="method">update_score</span>(<span class="string">"charlie"</span>, <span class="number">1800</span>)
+<span class="var">lb</span>.<span class="method">update_score</span>(<span class="string">"diana"</span>, <span class="number">3200</span>)
+
+<span class="comment"># Получение счета конкретного игрока</span>
+<span class="var">score</span> = <span class="var">lb</span>.<span class="method">get_score</span>(<span class="string">"alice"</span>)
+<span class="method">print</span>(<span class="string">f&quot;Счет Alice: {score}&quot;</span>)  <span class="comment"># Счет Alice: 1500</span>
+
+<span class="comment"># Получение топ-3 игроков</span>
+<span class="var">top3</span> = <span class="var">lb</span>.<span class="method">get_leaderboard</span>(<span class="number">3</span>)
+<span class="keyword">for</span> <span class="var">rank</span>, (<span class="var">key</span>, <span class="var">score</span>, <span class="var">tags</span>) <span class="keyword">in</span> <span class="method">enumerate</span>(<span class="var">top3</span>, <span class="number">1</span>):
+    <span class="method">print</span>(<span class="string">f&quot;{rank}. {key}: {score} очков&quot;</span>)
+<span class="comment"># 1. diana: 3200 очков</span>
+<span class="comment"># 2. bob: 2300 очков</span>
+<span class="comment"># 3. charlie: 1800 очков</span>
+
+<span class="comment"># Обновление счета</span>
+<span class="var">lb</span>.<span class="method">update_score</span>(<span class="string">"alice"</span>, <span class="number">3500</span>)  <span class="comment"># Alice теперь лидер</span>
+
+<span class="comment"># Удаление игрока</span>
+<span class="var">lb</span>.<span class="method">delete_object</span>(<span class="string">"charlie"</span>)</code></pre>
         </div>
       </div>
     </section>
@@ -156,70 +183,42 @@ const props = defineProps({
 .code-block code {
   color: rgba(255, 255, 255, 0.8);
   font-family: 'Courier New', monospace;
+  white-space: pre;
 }
 
-.code-block .keyword {
-  color: #667eea;
-  font-weight: 600;
-}
-
-.code-block .class {
-  color: #b8a4ff;
-}
-
-.code-block .var {
-  color: #e8d4ff;
-}
-
-.code-block .param {
-  color: #eaa7ff;
-}
-
-.code-block .string {
-  color: #76d47f;
-}
-
-.code-block .number {
-  color: #ffa878;
-}
-
-.code-block .method {
-  color: #76d4d4;
-}
-
-.code-block .property {
-  color: #ffc371;
-}
-
-.stats {
-  display: flex;
-  gap: 30px;
-  margin-top: 50px;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.stat-number {
-  font-size: 1.4rem;
+.keyword {
+  color: #8fb3ff;
   font-weight: 700;
-  color: #667eea;
 }
 
-.stat-label {
-  font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.6);
+.module {
+  color: #8be9fd;
 }
 
-.tagline {
-  font-size: 1.3rem;
-  margin-bottom: 40px;
-  opacity: 0.95;
-  font-weight: 300;
-  line-height: 1.6;
+.class-name {
+  color: #d7aefb;
+  font-weight: 700;
+}
+
+.var {
+  color: #f8c98d;
+}
+
+.method {
+  color: #7ee787;
+}
+
+.string {
+  color: #7ee787;
+}
+
+.number {
+  color: #ffb86b;
+}
+
+.comment {
+  color: rgba(255, 255, 255, 0.45);
+  font-style: italic;
 }
 
 .buttons {
@@ -259,61 +258,32 @@ const props = defineProps({
 }
 
 .btn-secondary:hover {
-  background: rgba(102, 126, 234, 0.3);
-  border-color: rgba(102, 126, 234, 0.8);
-  transform: translateY(-2px);
+  background: #667eea4d;
 }
 
-.scroll-indicator {
-  margin-top: 60px;
-  animation: bounce 2s infinite;
-}
-
-.scroll-button {
-  color: white;
-  text-decoration: none;
-  font-size: 0.9rem;
-  opacity: 0.8;
-  transition: opacity 0.3s ease;
-  display: inline-block;
-}
-
-.scroll-button:hover {
-  opacity: 1;
-}
-
-@keyframes bounce {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-10px);
-  }
-}
-
-@media (max-width: 1200px) {
+@media (max-width: 1100px) {
   .hero {
     flex-direction: column;
     gap: 40px;
-    padding: 40px 30px;
-    padding-top: 110px;
+    padding-left: 24px;
+    padding-right: 24px;
   }
 
-  .hero-left {
-    max-width: 100%;
-    padding-left: 0;
-  }
-
-  .hero-title {
-    font-size: 2.5rem;
-  }
-
-  .code-block {
-    max-width: 100%;
-  }
-
+  .hero-left,
   .hero-right {
     padding-left: 0;
+    padding-right: 0;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .hero-title {
+    font-size: 2.3rem;
+  }
+
+  .hero-description {
+    font-size: 1rem;
   }
 }
 </style>

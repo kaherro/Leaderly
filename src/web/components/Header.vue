@@ -16,7 +16,7 @@ const props = defineProps({
   },
   docsLink: {
     type: String,
-    default: '#docs'
+    default: 'https://github.com/kaherro/Leaderly/blob/dev/README.md'
   },
   githubLink: {
     type: String,
@@ -117,6 +117,7 @@ const props = defineProps({
   font-size: 0.9rem;
   transition: color 0.3s ease;
   font-weight: 500;
+  cursor: pointer; /* added */
 }
 
 .nav-link:hover {
@@ -149,3 +150,4 @@ const props = defineProps({
   }
 }
 </style>
+

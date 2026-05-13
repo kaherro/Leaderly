@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const variables = ref([
@@ -9,7 +9,15 @@ const variables = ref([
 
 const scoreFormula = ref('score')
 const showSettings = ref(false)
+const showEditModal = ref(false)
+const showUserModal = ref(false)
+const draftMode = ref('edit')
 const newVariable = ref({ name: '', key: '' })
+const tagDraftValues = ref({})
+const editDraftBaseline = ref({
+  score: '0',
+  tags: {}
+})
 
 const leaderboardData = ref([])
 const connectionState = ref('connecting')
@@ -76,6 +84,14 @@ const ensureUserVariableValue = (key) => {
   })
 }
 
+const buildTagDraftValues = (source = {}) => {
+  return variables.value.reduce((accumulator, variable) => {
+    const normalizedValue = Number(source[variable.key] ?? 0)
+    accumulator[variable.key] = Number.isFinite(normalizedValue) ? String(normalizedValue) : '0'
+    return accumulator
+  }, {})
+}
+
 const addVariable = () => {
   const name = newVariable.value.name.trim()
   const key = newVariable.value.key
@@ -87,6 +103,10 @@ const addVariable = () => {
   if (name && key && !variables.value.some((item) => item.key === key)) {
     variables.value.push({ name, key })
     ensureUserVariableValue(key)
+    tagDraftValues.value = {
+      ...tagDraftValues.value,
+      [key]: '0'
+    }
     newVariable.value = { name: '', key: '' }
   }
 }
@@ -103,6 +123,9 @@ const removeVariable = (index) => {
     const { [variable.key]: _, ...rest } = user
     return rest
   })
+
+  const { [variable.key]: _, ...restDraftValues } = tagDraftValues.value
+  tagDraftValues.value = restDraftValues
 }
 
 const compiledFormula = computed(() => {
@@ -167,19 +190,8 @@ const connectionBadgeClass = computed(() => {
 
 const gridColumns = computed(() => {
   const varColumns = variables.value.map(() => '120px').join(' ')
-  return `100px 1fr 150px ${varColumns} 90px`
+  return `100px 1fr 150px ${varColumns}`
 })
-
-const parseTagsInput = (rawTags) => {
-  if (!rawTags.trim()) {
-    return []
-  }
-
-  return rawTags
-    .split(',')
-    .map((tag) => Number(tag.trim()))
-    .filter((tag) => Number.isFinite(tag))
-}
 
 const normalizeKey = (value) => value.trim()
 
@@ -278,24 +290,54 @@ const sendSocketAction = (action, path = '') => {
 }
 
 const selectEntry = (entry) => {
-  const tags = variables.value.map((variable) => Number(entry[variable.key] ?? 0))
+  draftMode.value = 'edit'
+  const score = String(entry.score ?? 0)
+  const tags = buildTagDraftValues(entry)
 
   editDraft.value = {
     key: entry.key,
-    score: String(entry.score ?? 0),
-    tags: tags.join(', ')
+    score
   }
+  editDraftBaseline.value = {
+    score,
+    tags: { ...tags }
+  }
+  tagDraftValues.value = tags
 
-  showSettings.value = true
+  showEditModal.value = true
+  socketError.value = ''
+}
+
+const closeEditModal = () => {
+  showEditModal.value = false
+  socketError.value = ''
+}
+
+const openCreateUserModal = () => {
+  draftMode.value = 'create'
+  resetDraft()
+  showUserModal.value = true
+  socketError.value = ''
+}
+
+const closeUserModal = () => {
+  showUserModal.value = false
+  draftMode.value = 'edit'
   socketError.value = ''
 }
 
 const resetDraft = () => {
   editDraft.value = {
     key: '',
-    score: '0',
-    tags: ''
+    score: '0'
   }
+  tagDraftValues.value = buildTagDraftValues()
+}
+
+const resetEditDraft = () => {
+  editDraft.value.score = editDraftBaseline.value.score
+  tagDraftValues.value = { ...editDraftBaseline.value.tags }
+  socketError.value = ''
 }
 
 const refreshLeaderboard = async () => {
@@ -315,7 +357,9 @@ const saveEntry = async () => {
   const key = normalizeKey(editDraft.value.key)
 
   if (!key) {
-    socketError.value = 'Выберите пользователя для редактирования'
+    socketError.value = draftMode.value === 'create'
+      ? 'Введите имя пользователя'
+      : 'Выберите пользователя для редактирования'
     return
   }
 
@@ -328,17 +372,26 @@ const saveEntry = async () => {
 
   try {
     socketError.value = ''
-    statusMessage.value = 'Сохраняем изменения...'
+    statusMessage.value = draftMode.value === 'create' ? 'Добавляем пользователя...' : 'Сохраняем изменения...'
 
     await sendSocketAction('update_score', `${encodeURIComponent(key)}/${encodeURIComponent(String(score))}`)
 
-    const tags = parseTagsInput(editDraft.value.tags)
+    const tags = variables.value.map((variable) => {
+      const parsedValue = Number(tagDraftValues.value[variable.key] ?? 0)
+      return Number.isFinite(parsedValue) ? parsedValue : 0
+    })
     await sendSocketAction('update_tags', `${encodeURIComponent(key)}/${encodeURIComponent(tags.join(','))}`)
 
-    statusMessage.value = 'Изменения отправлены'
+    statusMessage.value = draftMode.value === 'create' ? 'Пользователь добавлен' : 'Изменения отправлены'
+    if (draftMode.value === 'create') {
+      showUserModal.value = false
+    } else {
+      showEditModal.value = false
+    }
+    draftMode.value = 'edit'
   } catch (error) {
     socketError.value = error instanceof Error ? error.message : 'Не удалось сохранить запись'
-    statusMessage.value = 'Ошибка при сохранении'
+    statusMessage.value = draftMode.value === 'create' ? 'Ошибка при добавлении' : 'Ошибка при сохранении'
   }
 }
 
@@ -355,6 +408,7 @@ const deleteEntry = async (keyOverride = '') => {
     statusMessage.value = 'Удаляем запись...'
     await sendSocketAction('delete_object', encodeURIComponent(key))
     resetDraft()
+    showEditModal.value = false
     statusMessage.value = 'Запись удалена'
   } catch (error) {
     socketError.value = error instanceof Error ? error.message : 'Не удалось удалить запись'
@@ -482,156 +536,206 @@ onBeforeUnmount(() => {
           <span class="connection-message">{{ statusMessage }}</span>
         </div>
         <div class="header-actions">
+          <button @click="openCreateUserModal" class="add-user-btn">＋ Добавить пользователя</button>
           <button @click="showSettings = !showSettings" class="settings-btn">
             ⚙️ {{ showSettings ? 'Скрыть настройки' : 'Настройки' }}
           </button>
-          <button @click="refreshLeaderboard" class="settings-btn">⟳ Обновить</button>
         </div>
       </div>
 
-      <div v-if="showSettings" class="settings-panel">
-        <div class="settings-section">
-          <h3 class="settings-title">Формула подсчета очков</h3>
-          <input
-            v-model="scoreFormula"
-            type="text"
-            class="formula-input"
-            placeholder="Например: score"
-          />
-          <p class="settings-hint">Список переменных: {{ availableVariableKeys.join(', ') }}</p>
-          <p v-if="formulaError" class="settings-error">{{ formulaError }}</p>
-        </div>
+      <div v-if="showEditModal" class="modal-backdrop" @click.self="closeEditModal">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h2 class="modal-title">Редактировать пользователя</h2>
+            <button class="modal-close-btn" @click="closeEditModal">✕</button>
+          </div>
 
-        <div class="settings-section">
-          <h3 class="settings-title">Переменные для подсчета</h3>
-          <div class="variables-list">
-            <div v-for="(variable, index) in variables" :key="index" class="variable-item">
-              <input
-                v-model="variable.name"
-                type="text"
-                class="variable-inline-input"
-                placeholder="Название"
-              />
-              <input
-                v-model="variable.key"
-                type="text"
-                class="variable-inline-input variable-inline-key"
-                placeholder="key"
-                @blur="normalizeVariableKey(index)"
-              />
-              <button @click="removeVariable(index)" class="remove-btn">✕</button>
+          <div class="modal-body">
+            <label class="modal-field">
+              <span>Очки</span>
+              <input v-model="editDraft.score" type="number" class="formula-input modal-input" placeholder="0" />
+            </label>
+
+            <div class="parameter-list">
+              <label v-for="variable in variables" :key="variable.key" class="modal-field">
+                <span>{{ variable.name }}</span>
+                <input
+                  v-model="tagDraftValues[variable.key]"
+                  type="number"
+                  class="formula-input modal-input"
+                  :placeholder="`Значение для ${variable.name}`"
+                />
+              </label>
             </div>
+
+            <p v-if="socketError" class="settings-error">{{ socketError }}</p>
           </div>
 
-          <div class="add-variable">
-            <input
-              v-model="newVariable.name"
-              type="text"
-              class="variable-input"
-              placeholder="Название"
-            />
-            <input
-              v-model="newVariable.key"
-              type="text"
-              class="variable-input"
-              placeholder="Ключ"
-            />
-            <button @click="addVariable" class="add-btn">+ Добавить</button>
-          </div>
-        </div>
-
-        <div class="settings-section">
-          <h3 class="settings-title">Прямое редактирование</h3>
-          <div class="editor-grid">
-            <input
-              v-model="editDraft.key"
-              type="text"
-              class="formula-input"
-              placeholder="key пользователя"
-              readonly
-            />
-            <input
-              v-model="editDraft.score"
-              type="number"
-              class="formula-input"
-              placeholder="Очки"
-            />
-            <input
-              v-model="editDraft.tags"
-              type="text"
-              class="formula-input"
-              placeholder="Теги через запятую"
-            />
-          </div>
-          <p class="settings-hint">Нажмите на карандаш в строке таблицы, чтобы редактировать запись.</p>
-          <p v-if="socketError" class="settings-error">{{ socketError }}</p>
-          <div class="editor-actions">
+          <div class="modal-actions">
             <button @click="saveEntry" class="add-btn">Сохранить</button>
             <button @click="deleteEntry" class="remove-btn wide-remove">Удалить</button>
-            <button @click="resetDraft" class="neutral-btn">Сбросить</button>
+            <button @click="resetEditDraft" class="neutral-btn">Сбросить</button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="showSettings" class="settings-backdrop" @click.self="showSettings = false">
+        <div class="settings-modal">
+          <div class="modal-header">
+            <h2 class="modal-title">Настройки лидерборда</h2>
+            <button class="modal-close-btn" @click="showSettings = false">✕</button>
+          </div>
+
+          <div class="settings-panel">
+            <div class="settings-section">
+              <h3 class="settings-title">Переменные для подсчета</h3>
+              <div class="variables-list">
+                <div v-for="(variable, index) in variables" :key="index" class="variable-item">
+                  <input
+                    v-model="variable.name"
+                    type="text"
+                    class="variable-inline-input"
+                    placeholder="Название"
+                  />
+                  <input
+                    v-model="variable.key"
+                    type="text"
+                    class="variable-inline-input variable-inline-key"
+                    placeholder="key"
+                    @blur="normalizeVariableKey(index)"
+                  />
+                  <button @click="removeVariable(index)" class="remove-btn">✕</button>
+                </div>
+              </div>
+
+              <div class="add-variable">
+                <input
+                  v-model="newVariable.name"
+                  type="text"
+                  class="variable-input"
+                  placeholder="Название"
+                />
+                <input
+                  v-model="newVariable.key"
+                  type="text"
+                  class="variable-input"
+                  placeholder="Ключ"
+                />
+                <button @click="addVariable" class="add-btn">+ Добавить</button>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
 
       <div class="leaderboard-container">
-        <div class="leaderboard-table">
-          <div class="table-header" :style="{ gridTemplateColumns: gridColumns }">
-            <div class="header-cell rank-cell">Место</div>
-            <div class="header-cell user-cell">Пользователь</div>
-            <div class="header-cell score-cell">Очки</div>
-            <div
-              v-for="(variable, variableIndex) in variables"
-              :key="`${variable.key}-${variableIndex}`"
-              class="header-cell var-cell"
-            >
-              {{ variable.name }}
-            </div>
-            <div class="header-cell actions-cell">Действия</div>
-          </div>
-
-          <div class="table-body">
-            <div
-              v-for="user in leaderboardRows"
-              :key="user.userId"
-              class="table-row"
-              :class="{ 'top-three': user.rank <= 3 }"
-              :style="{ gridTemplateColumns: gridColumns }"
-            >
-              <div class="body-cell rank-cell">
-                <span class="rank-badge" :class="'rank-' + user.rank">
-                  {{ user.rank }}
-                </span>
-              </div>
-              <div class="body-cell user-cell">
-                <div class="user-info">
-                  <div class="user-avatar">
-                    {{ user.username.charAt(0).toUpperCase() }}
-                  </div>
-                  <span class="username">{{ user.username }}</span>
+        <div class="leaderboard-table-shell">
+          <div class="leaderboard-table">
+            <div class="table-scroll-area">
+              <div class="table-header" :style="{ gridTemplateColumns: gridColumns }">
+                <div class="header-cell rank-cell">Место</div>
+                <div class="header-cell user-cell">Пользователь</div>
+                <div class="header-cell score-cell">Очки</div>
+                <div
+                  v-for="(variable, variableIndex) in variables"
+                  :key="`${variable.key}-${variableIndex}`"
+                  class="header-cell var-cell"
+                >
+                  {{ variable.name }}
                 </div>
               </div>
-              <div class="body-cell score-cell">
-                <span class="score">{{ user.computedScore.toLocaleString() }}</span>
-              </div>
-              <div
-                v-for="(variable, variableIndex) in variables"
-                :key="`${variable.key}-${variableIndex}`"
-                class="body-cell var-cell"
-              >
-                <span class="var-value">{{ user[variable.key] }}</span>
-              </div>
-              <div class="body-cell actions-cell">
-                <button @click="selectEntry(user)" class="inline-action-btn">✏️</button>
+
+              <div class="table-body">
+                <div v-for="user in leaderboardRows" :key="user.userId" class="table-row" :class="{ 'top-three': user.rank <= 3 }" :style="{ gridTemplateColumns: gridColumns }">
+                  <div class="body-cell rank-cell">
+                    <span class="rank-badge" :class="'rank-' + user.rank">
+                      {{ user.rank }}
+                    </span>
+                  </div>
+                  <div class="body-cell user-cell">
+                    <div class="user-info">
+                      <div class="user-avatar">
+                        {{ user.username.charAt(0).toUpperCase() }}
+                      </div>
+                      <span class="username">{{ user.username }}</span>
+                    </div>
+                  </div>
+                  <div class="body-cell score-cell">
+                    <span class="score">{{ user.computedScore.toLocaleString() }}</span>
+                  </div>
+                  <div
+                    v-for="(variable, variableIndex) in variables"
+                    :key="`${variable.key}-${variableIndex}`"
+                    class="body-cell var-cell"
+                  >
+                    <span class="var-value">{{ user[variable.key] }}</span>
+                  </div>
+                </div>
+
+                <div v-if="!leaderboardRows.length" class="empty-state">
+                  Пока нет данных. Добавьте записи через backend и они появятся здесь.
+                </div>
               </div>
             </div>
+          </div>
 
-            <div v-if="!leaderboardRows.length" class="empty-state">
-              Пока нет данных. Добавьте записи через backend и они появятся здесь.
+          <div v-if="leaderboardRows.length" class="table-actions-column">
+            <div class="table-actions-spacer"></div>
+            <div v-for="user in leaderboardRows" :key="`${user.userId}-action`" class="table-action-cell">
+              <button @click="selectEntry(user)" class="inline-action-btn" aria-label="Редактировать пользователя">✏️</button>
             </div>
           </div>
         </div>
       </div>
     </section>
+
+    <div v-if="showUserModal" class="modal-backdrop" @click.self="closeUserModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 class="modal-title">
+            {{ draftMode === 'create' ? 'Добавить пользователя' : 'Редактировать пользователя' }}
+          </h2>
+          <button class="modal-close-btn" @click="closeUserModal">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <label class="modal-field">
+            <span>Имя пользователя</span>
+            <input
+              v-model="editDraft.key"
+              type="text"
+              class="formula-input modal-input"
+              placeholder="Например: player_1"
+            />
+          </label>
+
+          <label class="modal-field">
+            <span>Очки</span>
+            <input v-model="editDraft.score" type="number" class="formula-input modal-input" placeholder="0" />
+          </label>
+
+          <div class="parameter-list">
+            <label v-for="variable in variables" :key="variable.key" class="modal-field">
+              <span>{{ variable.name }}</span>
+              <input
+                v-model="tagDraftValues[variable.key]"
+                type="number"
+                class="formula-input modal-input"
+                :placeholder="`Значение для ${variable.name}`"
+              />
+            </label>
+          </div>
+
+          <p v-if="socketError" class="settings-error">{{ socketError }}</p>
+        </div>
+
+        <div class="modal-actions">
+          <button @click="saveEntry" class="add-btn">{{ draftMode === 'create' ? 'Добавить' : 'Сохранить' }}</button>
+          <button @click="closeUserModal" class="neutral-btn">Отмена</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -737,9 +841,28 @@ onBeforeUnmount(() => {
 .header-actions {
   margin-top: 16px;
   display: flex;
-  gap: 10px;
+  gap: 14px;
   justify-content: center;
   flex-wrap: wrap;
+}
+
+.add-user-btn {
+  border: 1px solid rgba(118, 212, 118, 0.45);
+  background: rgba(118, 212, 118, 0.16);
+  color: rgba(255, 255, 255, 0.98);
+  padding: 10px 18px;
+  min-height: 0;
+  min-width: 0;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+}
+
+.add-user-btn:hover {
+  background: rgba(118, 212, 118, 0.28);
+  transform: translateY(-1px);
 }
 
 .settings-btn {
@@ -747,23 +870,25 @@ onBeforeUnmount(() => {
   background: rgba(102, 126, 234, 0.15);
   color: rgba(255, 255, 255, 0.95);
   padding: 10px 18px;
+  min-height: 0;
+  min-width: 0;
   border-radius: 10px;
-  font-weight: 600;
+  font-size: 0.9rem;
+  font-weight: 700;
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 }
 
 .settings-btn:hover {
   background: rgba(102, 126, 234, 0.3);
+  transform: translateY(-1px);
 }
 
 .settings-panel {
-  max-width: 1000px;
-  margin: 0 auto 24px;
-  padding: 20px;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid rgba(102, 126, 234, 0.25);
-  border-radius: 12px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
   position: relative;
   z-index: 1;
 }
@@ -856,11 +981,17 @@ onBeforeUnmount(() => {
 .add-btn {
   background: rgba(102, 126, 234, 0.8);
   padding: 0 14px;
+  min-height: 38px;
+  min-width: auto;
+  border-radius: 8px;
+  font-size: 0.92rem;
 }
 
 .remove-btn {
   background: rgba(255, 107, 107, 0.8);
   width: 38px;
+  height: 38px;
+  min-width: 38px;
 }
 
 .wide-remove {
@@ -871,6 +1002,147 @@ onBeforeUnmount(() => {
 .neutral-btn {
   background: rgba(255, 255, 255, 0.12);
   padding: 0 14px;
+  min-height: 38px;
+  min-width: auto;
+  border-radius: 8px;
+  font-size: 0.92rem;
+}
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 8, 20, 0.72);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1950;
+}
+
+.settings-modal {
+  width: min(980px, 100%);
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(15, 23, 42, 0.98));
+  border: 1px solid rgba(102, 126, 234, 0.35);
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  color-scheme: dark;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 8, 20, 0.72);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 2000;
+}
+
+.modal-card {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(15, 23, 42, 0.98));
+  border: 1px solid rgba(102, 126, 234, 0.35);
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  color-scheme: dark;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid rgba(102, 126, 234, 0.18);
+  color: #ffffff;
+}
+
+.modal-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.modal-close-btn {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+  cursor: pointer;
+}
+
+.modal-body {
+  padding: 18px 22px;
+  display: grid;
+  gap: 14px;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.modal-field {
+  display: grid;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.92rem;
+}
+
+.modal-field span {
+  color: #ffffff;
+}
+
+.modal-input {
+  color: #ffffff !important;
+  caret-color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(102, 126, 234, 0.42);
+  font-family: inherit;
+  appearance: none;
+}
+
+.modal-input::placeholder,
+.modal-card .modal-input::-webkit-input-placeholder,
+.modal-card .modal-input::-moz-placeholder,
+.modal-card .modal-input:-ms-input-placeholder {
+  color: rgba(255, 255, 255, 0.45) !important;
+  opacity: 1 !important;
+}
+
+.modal-input:focus {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff;
+}
+
+.modal-input:-webkit-autofill,
+.modal-input:-webkit-autofill:hover,
+.modal-input:-webkit-autofill:focus,
+.modal-input:-webkit-autofill:active {
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff;
+  box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.06) inset;
+  transition: background-color 9999s ease-out 0s;
+}
+
+.settings-modal .settings-panel {
+  max-width: none;
+  padding: 20px 22px 22px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 22px 22px;
+  flex-wrap: wrap;
 }
 
 .leaderboard-container {
@@ -882,20 +1154,31 @@ onBeforeUnmount(() => {
 
 .leaderboard-table {
   --table-scrollbar-width: 8px;
-  background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(102, 126, 234, 0.3);
   border-radius: 12px;
-  overflow: hidden;
+  max-height: 600px;
+  overflow: auto;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  margin-bottom: 30px;
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+}
+
+.table-scroll-area {
+  min-width: 100%;
+  width: max-content;
+  background: rgba(0, 0, 0, 0.3);
 }
 
 .table-header {
   display: grid;
   gap: 20px;
-  padding: 20px calc(30px + var(--table-scrollbar-width)) 20px 30px;
+  padding: 20px 30px;
   background: rgba(102, 126, 234, 0.1);
   border-bottom: 1px solid rgba(102, 126, 234, 0.2);
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .header-cell {
@@ -906,18 +1189,50 @@ onBeforeUnmount(() => {
   letter-spacing: 0.05em;
 }
 
-.table-body {
-  max-height: 600px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+.leaderboard-table-shell {
+  display: flex;
+  align-items: start;
+  gap: 16px;
+  width: 100%;
+}
+
+.table-actions-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 72px;
+  background: transparent;
+  border: none;
+  overflow: visible;
+  padding-top: 67px;
 }
 
 .table-row {
   display: grid;
   gap: 20px;
   padding: 20px 30px;
-  border-bottom: 1px solid rgba(102, 126, 234, 0.1);
   transition: background 0.3s ease;
+  min-width: 100%;
+}
+
+.table-header {
+  min-width: 100%;
+}
+
+.table-actions-spacer {
+  display: none;
+  width: 100%;
+}
+
+.table-action-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 64px;
+  padding: 20px 0;
+  border-bottom: none;
+  background: transparent;
 }
 
 .table-row:hover {
@@ -1001,18 +1316,15 @@ onBeforeUnmount(() => {
   color: rgba(255, 255, 255, 0.8);
 }
 
-.actions-cell {
-  justify-content: flex-end;
-}
-
 .inline-action-btn {
   border: none;
   border-radius: 10px;
-  background: rgba(102, 126, 234, 0.22);
-  border: 1px solid rgba(102, 126, 234, 0.45);
+  background: rgba(102, 126, 234, 0.26);
+  border: 1px solid rgba(102, 126, 234, 0.55);
   color: #fff;
-  width: 36px;
-  height: 36px;
+  width: 48px;
+  height: 48px;
+  font-size: 1.15rem;
   cursor: pointer;
 }
 
@@ -1038,6 +1350,16 @@ onBeforeUnmount(() => {
   background: rgba(102, 126, 234, 0.65);
 }
 
+.table-scroll-area .table-header,
+.table-scroll-area .table-row,
+.table-scroll-area .empty-state {
+  background-clip: padding-box;
+}
+
+.table-scroll-area .table-row.top-three {
+  background: rgba(102, 126, 234, 0.08);
+}
+
 @media (max-width: 1100px) {
   .leaderboard-section {
     padding-left: 24px;
@@ -1054,6 +1376,14 @@ onBeforeUnmount(() => {
     display: none;
   }
 
+  .leaderboard-table-shell {
+    display: block;
+  }
+
+  .table-actions-column {
+    display: none;
+  }
+
   .body-cell {
     justify-content: flex-start;
   }
@@ -1061,6 +1391,26 @@ onBeforeUnmount(() => {
   .variable-item,
   .add-variable {
     grid-template-columns: 1fr;
+  }
+
+  .add-user-btn,
+  .settings-btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .modal-actions {
+    justify-content: stretch;
+  }
+
+  .modal-actions .add-btn,
+  .modal-actions .neutral-btn {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .settings-modal {
+    width: min(560px, 100%);
   }
 }
 </style>
