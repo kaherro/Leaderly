@@ -5,8 +5,5 @@ src/bases/__pycache__/
 src/web/dis/
 src/web/node_modules/
 .dockerignore
-Dockerfile
-Dockerfile.proxy
-requirements.docker.txt
 docker/entrypoint.sh
 docker/proxy-entrypoint.sh

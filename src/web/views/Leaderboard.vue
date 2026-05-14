@@ -573,7 +573,7 @@ onBeforeUnmount(() => {
 
           <div class="modal-actions">
             <button @click="saveEntry" class="add-btn">Сохранить</button>
-            <button @click="deleteEntry" class="remove-btn wide-remove">Удалить</button>
+            <button @click="deleteEntry()" class="remove-btn wide-remove">Удалить</button>
             <button @click="resetEditDraft" class="neutral-btn">Сбросить</button>
           </div>
         </div>

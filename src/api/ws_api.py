@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from typing import Set
+import os
 import logging
 
 import sys
@@ -16,7 +17,15 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-db_manager = DBManager()
+db_manager = DBManager(
+    redis_host=os.getenv("REDIS_HOST", "localhost"),
+    redis_port=int(os.getenv("REDIS_PORT", "6379")),
+    pg_host=os.getenv("PG_HOST", "localhost"),
+    pg_port=int(os.getenv("PG_PORT", "5432")),
+    pg_user=os.getenv("PG_USER", "postgres"),
+    pg_password=os.getenv("PG_PASSWORD", "2991"),
+    pg_dbname=os.getenv("PG_DBNAME", "leaderly"),
+)
 
 active_connections: Set[WebSocket] = set()
 

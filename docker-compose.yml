@@ -37,7 +37,7 @@ services:
       PG_DBNAME: ${POSTGRES_DB:-leaderly}
     volumes:
       - ./:/app
-    command: sh -c "pip install -r requirements.docker.txt && python src/api/ws_api.py"
+    command: sh -c "pip install -r requirements.txt && python src/api/ws_api.py"
     depends_on:
       - redis
       - postgres
